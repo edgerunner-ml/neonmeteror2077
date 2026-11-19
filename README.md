@@ -1,2 +1,2 @@
 # neonmeteror2077
-Jogo em estilo pinball.
+Jogo em estilo pinball para desktop.
