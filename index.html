@@ -1015,6 +1015,58 @@ function drawCabinetHUD() {
 }
 
 /* ---------- SUPERFÍCIE DO PLAYFIELD EM PERSPECTIVA ---------- */
+/* decorações estelares das laterais (coordenadas locais da mesa) */
+function drawShip() {
+  g.fillStyle = '#ff7a1a';
+  g.beginPath(); g.moveTo(-9, 52); g.lineTo(0, 88); g.lineTo(9, 52); g.closePath(); g.fill();
+  g.fillStyle = '#fff066';
+  g.beginPath(); g.moveTo(-4, 52); g.lineTo(0, 70); g.lineTo(4, 52); g.closePath(); g.fill();
+  g.fillStyle = '#d41420';
+  g.beginPath(); g.moveTo(-14, 8); g.lineTo(-36, 58); g.lineTo(-14, 48); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(14, 8); g.lineTo(36, 58); g.lineTo(14, 48); g.closePath(); g.fill();
+  const bg = g.createLinearGradient(-18, 0, 18, 0);
+  bg.addColorStop(0, '#6a7592'); bg.addColorStop(0.45, '#ffffff'); bg.addColorStop(1, '#5a6580');
+  g.fillStyle = bg;
+  g.beginPath();
+  g.moveTo(0, -74); g.quadraticCurveTo(24, -30, 16, 52); g.lineTo(-16, 52); g.quadraticCurveTo(-24, -30, 0, -74);
+  g.closePath(); g.fill();
+  g.strokeStyle = '#ff9a30'; g.lineWidth = 2.5; g.stroke();
+  g.fillStyle = '#2a8cff';
+  g.beginPath(); g.arc(0, -14, 8, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.stroke();
+}
+function drawRinged() {
+  g.save(); g.rotate(-0.3);
+  g.strokeStyle = 'rgba(255, 210, 110, 0.6)'; g.lineWidth = 4;
+  g.beginPath(); g.ellipse(0, 0, 52, 13, 0, Math.PI, Math.PI * 2); g.stroke();
+  g.restore();
+  const pg = g.createRadialGradient(-7, -7, 2, 0, 0, 22);
+  pg.addColorStop(0, '#9ec8ff'); pg.addColorStop(0.55, '#4a3ad0'); pg.addColorStop(1, '#140a50');
+  g.fillStyle = pg;
+  g.beginPath(); g.arc(0, 0, 21, 0, Math.PI * 2); g.fill();
+  g.save(); g.rotate(-0.3);
+  g.strokeStyle = 'rgba(255, 230, 150, 0.9)'; g.lineWidth = 4.5;
+  g.beginPath(); g.ellipse(0, 0, 52, 13, 0, 0, Math.PI); g.stroke();
+  g.restore();
+}
+function drawSun() {
+  const hg = g.createRadialGradient(0, 0, 6, 0, 0, 38);
+  hg.addColorStop(0, 'rgba(255, 200, 60, 0.55)'); hg.addColorStop(1, 'rgba(255, 90, 0, 0)');
+  g.fillStyle = hg;
+  g.beginPath(); g.arc(0, 0, 38, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#ffc040'; g.lineWidth = 3; g.lineCap = 'round';
+  g.beginPath();
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6, r2 = i % 2 ? 27 : 34;
+    g.moveTo(Math.cos(a) * 17, Math.sin(a) * 17); g.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
+  }
+  g.stroke();
+  const sg = g.createRadialGradient(-4, -4, 2, 0, 0, 15);
+  sg.addColorStop(0, '#fffbd0'); sg.addColorStop(0.55, '#ffc030'); sg.addColorStop(1, '#ff6a00');
+  g.fillStyle = sg;
+  g.beginPath(); g.arc(0, 0, 15, 0, Math.PI * 2); g.fill();
+}
+
 function drawPlayfieldSurface() {
   g.save();
   traceProjectedPoly(playfieldPts, 0);
@@ -1136,29 +1188,12 @@ function drawPlayfieldSurface() {
   g.restore();
 
   [0, 1].forEach(m => {
-    const shapes = [[80, 650, 38, 72], [125, 725, 60, 28], [150, 685, 32, 40]];
-    shapes.forEach(e => {
-      const cx = m ? 460 - e[0] : e[0];
-      const cy = e[1];
-      const p = project(cx, cy, 0);
+    [[80, 650, drawShip], [125, 725, drawRinged], [150, 685, drawSun]].forEach(e => {
+      const p = project(m ? 460 - e[0] : e[0], e[1], 0);
       g.save();
       g.translate(p.x, p.y);
       g.scale(p.s, p.syScale);
-      g.fillStyle = 'rgba(255, 120, 0, 0.14)';
-      g.strokeStyle = '#ff9a30';
-      g.lineWidth = 2.5;
-      g.beginPath();
-      g.ellipse(0, 0, e[2] + 4, e[3] + 4, 0, 0, Math.PI * 2);
-      g.fill();
-      g.stroke();
-
-      const eg = g.createLinearGradient(-e[2], -e[3], e[2], e[3]);
-      eg.addColorStop(0, '#ff3a20');
-      eg.addColorStop(1, '#7a0808');
-      g.fillStyle = eg;
-      g.beginPath();
-      g.ellipse(0, 0, e[2], e[3], 0, 0, Math.PI * 2);
-      g.fill();
+      e[2]();
       g.restore();
     });
   });
