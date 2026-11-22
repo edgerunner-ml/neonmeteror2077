@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>NEON METEOR 2077 - 2.5D Arcade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
   html, body {
@@ -28,18 +30,20 @@
     background:
       radial-gradient(circle at 50% 52%, transparent 64%, rgba(0, 0, 0, 0.52) 100%),
       repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.14) 0 1px, transparent 1px 3px);
-    mix-blend-mode: multiply;
   }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <script>
-const cv = document.getElementById('c'), g = cv.getContext('2d');
+const cv = document.getElementById('c');
+const mainG = cv.getContext('2d', { alpha: false });
+let g = mainG;
 const VW = 500, VH = 920, R = 10, G = 1000, FL = 78, N = 10;
 const FONT = "'Orbitron', monospace";
 const MONO = "'Share Tech Mono', monospace";
-let w, h, dpr, bgStatic;
+let w, h, dpr, bgStatic, horizonLine, layerA, hudGeom, maxDpr = 2;
+const HZ_PAD = 28;
 
 /* ---------- MESA & GEOMETRIA LÓGICA (100% PRESERVADA) ---------- */
 const walls = [];
@@ -58,10 +62,10 @@ const slings = [[60, 590, 125, 720], [400, 590, 335, 720]];
 const slingFlash = [0, 0];
 
 const bumpers = [
-  { x: 205, y: 95, r: 19, c: '#ff2a55', glow: '#ff0044', f: 0, rot: 0 },
-  { x: 142, y: 132, r: 19, c: '#ff2a55', glow: '#ff0044', f: 0, rot: 1.1 },
-  { x: 110, y: 190, r: 19, c: '#ff2a55', glow: '#ff0044', f: 0, rot: 2.2 },
-  { x: 115, y: 315, r: 36, c: '#ff9d00', glow: '#ff6600', f: 0, rot: 0.5 }
+  { x: 205, y: 95, r: 19, c: '#ffc61a', glow: '#ff9a00', f: 0, rot: 0 },
+  { x: 142, y: 132, r: 19, c: '#ffc61a', glow: '#ff9a00', f: 0, rot: 1.1 },
+  { x: 110, y: 190, r: 19, c: '#ffc61a', glow: '#ff9a00', f: 0, rot: 2.2 },
+  { x: 115, y: 315, r: 36, c: '#ff2a20', glow: '#ff0000', f: 0, rot: 0.5 }
 ];
 
 const posts = [
@@ -210,6 +214,7 @@ function nudge(dx, dy) {
 
 /* ---------- SISTEMA DE PARTÍCULAS & POPUPS ---------- */
 function spawnSparks(x, y, col, count = 12, speed = 220, life = 0.45) {
+  if (particles.length > 320) return;
   for (let i = 0; i < count; i++) {
     const ang = Math.random() * Math.PI * 2;
     const spd = (0.3 + Math.random() * 0.7) * speed;
@@ -389,7 +394,7 @@ function step(dt) {
     for (const q of walls) {
       const r = seg(q[0], q[1], q[2], q[3], 0, q[4]);
       if (r && r.vn < -350 && i === 0) {
-        spawnSparks(r.cx, r.cy, '#00ffff', 5, 140, 0.25);
+        spawnSparks(r.cx, r.cy, '#ffa030', 5, 140, 0.25);
       }
     }
 
@@ -397,7 +402,7 @@ function step(dt) {
       const t = tip(f);
       const r = seg(f.px, f.py, t[0], t[1], 9, .3, f);
       if (r && r.vn < -250 && i === 0) {
-        spawnSparks(r.cx, r.cy, '#ff44ff', 6, 180, 0.3);
+        spawnSparks(r.cx, r.cy, '#ffd080', 6, 180, 0.3);
       }
     });
 
@@ -618,15 +623,58 @@ function update(dt) {
 }
 
 /* ---------- TEXTO NEON NÍTIDO ---------- */
+const glowCache = new Map(), spriteCache = new Map();
+const mctx = document.createElement('canvas').getContext('2d');
+function getSprite(key, cw, ch, draw) {
+  let c = spriteCache.get(key);
+  if (!c) {
+    if (spriteCache.size > 300) spriteCache.clear();
+    c = document.createElement('canvas');
+    c.width = Math.ceil(cw * dpr); c.height = Math.ceil(ch * dpr);
+    const k = c.getContext('2d');
+    k.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(k);
+    spriteCache.set(key, c);
+  }
+  return c;
+}
+function drawCachedAt(key, p, rad, fn) {
+  const SZ = Math.ceil(2 * (rad + 26));
+  const x0 = Math.round((p.x - SZ / 2) * dpr) / dpr, y0 = Math.round((p.y - SZ / 2) * dpr) / dpr;
+  const c = getSprite(key, SZ, SZ, k => {
+    k.translate(-x0, -y0);
+    const prev = g; g = k;
+    try { fn(); } finally { g = prev; }
+  });
+  g.drawImage(c, x0, y0, c.width / dpr, c.height / dpr);
+}
+/* texto neon pré-renderizado (o brilho é calculado 1x e reaproveitado) */
 function glowText(t, x, y, size, col, al = 'center', font = FONT, blur = 14) {
-  g.font = `900 ${size}px ${font}`;
-  g.textAlign = al;
-  g.textBaseline = 'middle';
-  g.shadowColor = col;
-  g.shadowBlur = blur;
-  g.fillStyle = col;
-  g.fillText(t, x, y);
-  g.shadowBlur = 0;
+  size = Math.round(size * 2) / 2;
+  const key = t + '|' + size + '|' + col + '|' + font + '|' + blur;
+  let s = glowCache.get(key);
+  if (!s) {
+    if (glowCache.size > 400) glowCache.clear();
+    const f = `900 ${size}px ${font}`;
+    mctx.font = f;
+    const tw = Math.ceil(mctx.measureText(t).width), pad = Math.ceil(blur * 2 + 4), ch = Math.ceil(size * 1.6) + pad * 2;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil((tw + pad * 2) * dpr); c.height = Math.ceil(ch * dpr);
+    const k = c.getContext('2d');
+    k.setTransform(dpr, 0, 0, dpr, 0, 0);
+    k.font = f; k.textAlign = 'left'; k.textBaseline = 'middle';
+    k.shadowColor = col; k.shadowBlur = blur; k.fillStyle = col;
+    k.fillText(t, pad, ch / 2);
+    s = { c, tw, pad, ch };
+    glowCache.set(key, s);
+  }
+  const dx = al === 'center' ? -s.tw / 2 : al === 'right' ? -s.tw : 0;
+  g.drawImage(s.c, x + dx - s.pad, y - s.ch / 2, s.c.width / dpr, s.c.height / dpr);
+}
+if (document.fonts) {
+  const refreshText = () => glowCache.clear();
+  ['900 16px Orbitron', "900 16px 'Share Tech Mono'"].forEach(f => document.fonts.load(f).then(refreshText, () => {}));
+  document.fonts.ready.then(refreshText);
 }
 
 /* ---------- FUNDO PANORÂMICO SYNTHWAVE ---------- */
@@ -709,19 +757,27 @@ function buildStaticBg() {
   floorGr.addColorStop(1, '#020006');
   k.fillStyle = floorGr;
   k.fillRect(0, hz, w, h - hz);
+  horizonLine = document.createElement('canvas');
+  horizonLine.width = Math.ceil(w * dpr); horizonLine.height = Math.ceil(HZ_PAD * 2 * dpr);
+  const q = horizonLine.getContext('2d');
+  q.setTransform(dpr, 0, 0, dpr, 0, 0);
+  q.shadowColor = '#ff00dd'; q.shadowBlur = 18;
+  q.strokeStyle = '#ff44ee'; q.lineWidth = 2;
+  q.beginPath(); q.moveTo(0, HZ_PAD); q.lineTo(w, HZ_PAD); q.stroke();
 }
 
 function drawAnimatedBg(t) {
   g.drawImage(bgStatic, 0, 0, w, h);
   const hz = h * 0.24;
 
+  g.fillStyle = '#dcf5ff';
   for (const st of stars) {
-    const alpha = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 0.002 * st.spd + st.phase));
-    g.fillStyle = `rgba(220, 245, 255, ${alpha.toFixed(2)})`;
+    g.globalAlpha = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 0.002 * st.spd + st.phase));
     g.beginPath();
     g.arc(st.x * w, st.y * h, st.r, 0, Math.PI * 2);
     g.fill();
   }
+  g.globalAlpha = 1;
 
   g.save();
   g.beginPath();
@@ -746,26 +802,26 @@ function drawAnimatedBg(t) {
   g.stroke();
   g.restore();
 
-  g.shadowColor = '#ff00dd';
-  g.shadowBlur = 18;
-  g.strokeStyle = '#ff44ee';
-  g.lineWidth = 2;
-  g.beginPath();
-  g.moveTo(0, hz);
-  g.lineTo(w, hz);
-  g.stroke();
-  g.shadowBlur = 0;
+  if (horizonLine) g.drawImage(horizonLine, 0, hz - HZ_PAD, w, HZ_PAD * 2);
 }
 
 function resize() {
-  dpr = Math.min(devicePixelRatio || 1, 2);
+  dpr = Math.min(devicePixelRatio || 1, maxDpr);
   w = Math.max(1, innerWidth);
   h = Math.max(1, innerHeight);
   cv.width = w * dpr;
   cv.height = h * dpr;
+  mainG.lineCap = 'round'; mainG.lineJoin = 'round';
+  glowCache.clear(); spriteCache.clear();
   buildStaticBg();
+  buildStaticLayers();
 }
-addEventListener('resize', resize);
+let rzPending = false;
+addEventListener('resize', () => {
+  if (rzPending) return;
+  rzPending = true;
+  requestAnimationFrame(() => { rzPending = false; resize(); });
+});
 
 /* ---------- CONTORNO DA MESA EM PERSPECTIVA ---------- */
 function getPlayfieldOutlinePts() {
@@ -780,7 +836,7 @@ function getPlayfieldOutlinePts() {
 const playfieldPts = getPlayfieldOutlinePts();
 
 /* ---------- GABINETE ARCADE 2.5D + BACKGLASS LED ---------- */
-function drawCabinet3D(t) {
+function drawCabinetStatic() {
   const TL_top = project(-22, -12, 34);
   const TR_top = project(522, -12, 34);
   const BR_top = project(522, 935, 34);
@@ -801,9 +857,9 @@ function drawCabinet3D(t) {
   g.fill();
 
   const leftSideGr = g.createLinearGradient(BL_bot.x, BL_bot.y, TL_top.x, TL_top.y);
-  leftSideGr.addColorStop(0, '#1f1738');
-  leftSideGr.addColorStop(0.5, '#120c24');
-  leftSideGr.addColorStop(1, '#080514');
+  leftSideGr.addColorStop(0, '#3a0e0c');
+  leftSideGr.addColorStop(0.5, '#220807');
+  leftSideGr.addColorStop(1, '#0e0303');
   g.fillStyle = leftSideGr;
   g.beginPath();
   g.moveTo(TL_top.x, TL_top.y);
@@ -813,7 +869,7 @@ function drawCabinet3D(t) {
   g.closePath();
   g.fill();
 
-  g.strokeStyle = 'rgba(0, 246, 255, 0.55)';
+  g.strokeStyle = 'rgba(255, 120, 30, 0.6)';
   g.lineWidth = 2.5;
   g.beginPath();
   g.moveTo((TL_top.x + TL_bot.x) * 0.5, (TL_top.y + TL_bot.y) * 0.5);
@@ -821,9 +877,9 @@ function drawCabinet3D(t) {
   g.stroke();
 
   const rightSideGr = g.createLinearGradient(BR_bot.x, BR_bot.y, TR_top.x, TR_top.y);
-  rightSideGr.addColorStop(0, '#1f1738');
-  rightSideGr.addColorStop(0.5, '#120c24');
-  rightSideGr.addColorStop(1, '#080514');
+  rightSideGr.addColorStop(0, '#3a0e0c');
+  rightSideGr.addColorStop(0.5, '#220807');
+  rightSideGr.addColorStop(1, '#0e0303');
   g.fillStyle = rightSideGr;
   g.beginPath();
   g.moveTo(TR_top.x, TR_top.y);
@@ -833,7 +889,7 @@ function drawCabinet3D(t) {
   g.closePath();
   g.fill();
 
-  g.strokeStyle = 'rgba(255, 0, 212, 0.55)';
+  g.strokeStyle = 'rgba(255, 60, 30, 0.6)';
   g.lineWidth = 2.5;
   g.beginPath();
   g.moveTo((TR_top.x + TR_bot.x) * 0.5, (TR_top.y + TR_bot.y) * 0.5);
@@ -865,9 +921,9 @@ function drawCabinet3D(t) {
   g.closePath();
   g.fill();
 
-  g.shadowColor = '#ff00cc';
+  g.shadowColor = '#ff5a00';
   g.shadowBlur = 16;
-  g.strokeStyle = '#ff22dd';
+  g.strokeStyle = '#ff3a1a';
   g.lineWidth = 3;
   g.beginPath();
   g.moveTo(TL_top.x, TL_top.y);
@@ -883,12 +939,12 @@ function drawCabinet3D(t) {
   const bgY = Math.max(8, TL_top.y - bgH + 6);
 
   const panelGr = g.createLinearGradient(bgX, bgY, bgX, bgY + bgH);
-  panelGr.addColorStop(0, '#13072b');
-  panelGr.addColorStop(1, '#070214');
+  panelGr.addColorStop(0, '#2a0a08');
+  panelGr.addColorStop(1, '#0e0304');
   g.fillStyle = panelGr;
-  g.strokeStyle = '#00f6ff';
+  g.strokeStyle = '#ff7a1a';
   g.lineWidth = 2.5;
-  g.shadowColor = '#00f6ff';
+  g.shadowColor = '#ff7a1a';
   g.shadowBlur = 16;
   g.beginPath();
   g.roundRect(bgX, bgY, bgW, bgH, 14);
@@ -905,13 +961,18 @@ function drawCabinet3D(t) {
   g.moveTo(rightSecX, bgY + 10); g.lineTo(rightSecX, bgY + bgH - 10);
   g.stroke();
 
+  hudGeom = { bgX, bgY, bgW, bgH, leftSecX, rightSecX };
+}
+
+function drawCabinetHUD() {
+  const { bgX, bgY, bgW, bgH, leftSecX, rightSecX } = hudGeom;
   const cxLeft = (bgX + leftSecX) * 0.5;
-  glowText('NEON METEOR', cxLeft, bgY + bgH * 0.34, Math.min(18, bgW * 0.025), '#ff00ee', 'center', FONT, 12);
+  glowText('NEON METEOR', cxLeft, bgY + bgH * 0.34, Math.min(18, bgW * 0.025), '#ff5a1a', 'center', FONT, 12);
   glowText('REC ' + String(best).padStart(7, '0'), cxLeft, bgY + bgH * 0.72, Math.min(14, bgW * 0.02), '#ffee00', 'center', MONO, 8);
 
   const cxMid = (leftSecX + rightSecX) * 0.5;
   glowText('SCORE', cxMid, bgY + bgH * 0.25, Math.min(12, bgW * 0.016), '#7ae8ff', 'center', MONO, 6);
-  glowText(String(score).padStart(7, '0'), cxMid, bgY + bgH * 0.66, Math.min(34, bgW * 0.046), '#00f6ff', 'center', FONT, 16);
+  glowText(String(score).padStart(7, '0'), cxMid, bgY + bgH * 0.66, Math.min(34, bgW * 0.046), '#ffb020', 'center', FONT, 16);
 
   const cxRight = (rightSecX + bgX + bgW) * 0.5;
   const currentBalls = Math.max(balls, 0);
@@ -961,14 +1022,14 @@ function drawPlayfieldSurface() {
   const pTop = project(250, 40, 0);
   const pBot = project(250, 880, 0);
   const baseBg = g.createLinearGradient(0, pTop.y, 0, pBot.y);
-  baseBg.addColorStop(0, '#040112');
+  baseBg.addColorStop(0, '#05031a');
   baseBg.addColorStop(0.5, '#090221');
   baseBg.addColorStop(1, '#050114');
   g.fillStyle = baseBg;
   g.fill();
   g.clip();
 
-  g.strokeStyle = 'rgba(0, 255, 255, 0.065)';
+  g.strokeStyle = 'rgba(255, 150, 80, 0.035)';
   g.lineWidth = 1;
   g.beginPath();
   for (let gx = 20; gx <= 480; gx += 25) {
@@ -1002,10 +1063,25 @@ function drawPlayfieldSurface() {
     g.fill();
     g.restore();
   };
-  drawNebula(290, 195, 165, 'rgba(220, 25, 115, 0.36)', 'rgba(55, 20, 160, 0.16)');
-  drawNebula(370, 350, 130, 'rgba(20, 90, 255, 0.30)', 'rgba(130, 15, 140, 0.12)');
-  drawNebula(115, 315, 110, 'rgba(255, 120, 0, 0.25)', 'rgba(120, 10, 40, 0.08)');
-  drawNebula(230, 680, 180, 'rgba(0, 180, 255, 0.18)', 'rgba(255, 0, 180, 0.08)');
+  drawNebula(250, 140, 190, 'rgba(255, 70, 20, 0.50)', 'rgba(150, 10, 40, 0.22)');
+  drawNebula(90, 230, 130, 'rgba(230, 20, 40, 0.45)', 'rgba(90, 10, 120, 0.15)');
+  drawNebula(390, 330, 130, 'rgba(255, 130, 10, 0.40)', 'rgba(180, 20, 30, 0.14)');
+  drawNebula(250, 470, 120, 'rgba(200, 15, 25, 0.42)', 'rgba(60, 10, 90, 0.12)');
+  drawNebula(105, 650, 150, 'rgba(30, 60, 255, 0.50)', 'rgba(80, 20, 180, 0.20)');
+  drawNebula(375, 650, 150, 'rgba(30, 60, 255, 0.50)', 'rgba(80, 20, 180, 0.20)');
+  drawNebula(250, 790, 120, 'rgba(255, 40, 20, 0.35)', 'rgba(120, 10, 30, 0.10)');
+  let sd = 4242; const rn = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 80; i++) {
+    const sp = project(25 + rn() * 450, 45 + rn() * 820, 0);
+    g.globalAlpha = 0.35 + rn() * 0.6;
+    g.fillStyle = ['#ffffff', '#ffd9a0', '#9ec8ff'][i % 3];
+    g.beginPath(); g.arc(sp.x, sp.y, (0.6 + rn() * 1.4) * sp.s * 0.6, 0, Math.PI * 2); g.fill();
+  }
+  g.globalAlpha = 1;
+  traceProjectedPoly(playfieldPts, 0);
+  g.strokeStyle = 'rgba(200, 20, 28, 0.85)';
+  g.lineWidth = 14;
+  g.stroke();
 
   const pl = project(395, 205, 0);
   g.save();
@@ -1023,11 +1099,15 @@ function drawPlayfieldSurface() {
   g.beginPath(); g.ellipse(0, 0, 54, 14, 0, Math.PI, Math.PI * 2); g.stroke();
 
   const pBody = g.createRadialGradient(-8, -8, 3, 0, 0, 26);
-  pBody.addColorStop(0, '#fff078');
-  pBody.addColorStop(0.55, '#ff8811');
-  pBody.addColorStop(1, '#5c1408');
+  pBody.addColorStop(0, '#ff7a6a');
+  pBody.addColorStop(0.55, '#d41420');
+  pBody.addColorStop(1, '#4a0408');
   g.fillStyle = pBody;
   g.beginPath(); g.arc(0, 0, 25, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#ffffff';
+  g.beginPath();
+  for (let i = 0; i < 10; i++) { const r = i % 2 ? 9 : 22, a = -Math.PI / 2 + i * Math.PI / 5; g.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+  g.closePath(); g.fill();
 
   g.strokeStyle = 'rgba(255, 230, 150, 0.85)';
   g.lineWidth = 4.5;
@@ -1064,8 +1144,8 @@ function drawPlayfieldSurface() {
       g.save();
       g.translate(p.x, p.y);
       g.scale(p.s, p.syScale);
-      g.fillStyle = 'rgba(0, 255, 255, 0.14)';
-      g.strokeStyle = '#00f0ff';
+      g.fillStyle = 'rgba(255, 120, 0, 0.14)';
+      g.strokeStyle = '#ff9a30';
       g.lineWidth = 2.5;
       g.beginPath();
       g.ellipse(0, 0, e[2] + 4, e[3] + 4, 0, 0, Math.PI * 2);
@@ -1073,8 +1153,8 @@ function drawPlayfieldSurface() {
       g.stroke();
 
       const eg = g.createLinearGradient(-e[2], -e[3], e[2], e[3]);
-      eg.addColorStop(0, '#ff8c1a');
-      eg.addColorStop(1, '#b83b00');
+      eg.addColorStop(0, '#ff3a20');
+      eg.addColorStop(1, '#7a0808');
       g.fillStyle = eg;
       g.beginPath();
       g.ellipse(0, 0, e[2], e[3], 0, 0, Math.PI * 2);
@@ -1111,28 +1191,6 @@ function drawPlayfieldSurface() {
     }
   }
 
-  for (let i = 0; i < 6; i++) {
-    const lx = 250 + i * 24, ly = 345 - i * 18;
-    const p = project(lx, ly, 0);
-    const on = i < hits % 7;
-    const c = ['#ffee33', '#ffffff', '#d580ff'][i % 3];
-
-    g.save();
-    g.translate(p.x, p.y);
-    g.scale(p.s, p.syScale);
-    g.fillStyle = '#120b24';
-    g.beginPath(); g.arc(0, 0, 10, 0, Math.PI * 2); g.fill();
-    g.fillStyle = on ? c : '#241a3a';
-    g.shadowColor = c;
-    g.shadowBlur = on ? 16 : 0;
-    g.strokeStyle = c;
-    g.lineWidth = 2;
-    g.beginPath(); g.arc(0, 0, 7.5, 0, Math.PI * 2); g.fill(); g.stroke();
-    g.restore();
-  }
-  g.shadowBlur = 0;
-
-  const rc = ['#ff2a55', '#c850ff', '#ffffff', '#00e676', '#ff9100', '#ffee00', '#00f6ff'];
   for (let c = 0; c < 3; c++) {
     const x = 190 + 40 * c;
     const tl = project(x - 13, 428, 0);
@@ -1149,23 +1207,53 @@ function drawPlayfieldSurface() {
     g.fill();
     g.stroke();
 
+  }
+  g.restore();
+}
+
+/* partes animadas do tapete: luzes, LEDs (sprites em cache) e ondas de choque */
+const LED_COLS = ['#ff2a55', '#c850ff', '#ffffff', '#00e676', '#ff9100', '#ffee00', '#00f6ff'];
+function drawFieldLight(i, on) {
+  const p = project(250 + i * 24, 345 - i * 18, 0);
+  const c = ['#ffee33', '#ffffff', '#d580ff'][i % 3];
+  g.save();
+  g.translate(p.x, p.y);
+  g.scale(p.s, p.syScale);
+  g.fillStyle = '#120b24';
+  g.beginPath(); g.arc(0, 0, 10, 0, Math.PI * 2); g.fill();
+  g.fillStyle = on ? c : '#241a3a';
+  g.shadowColor = c;
+  g.shadowBlur = on ? 16 : 0;
+  g.strokeStyle = c;
+  g.lineWidth = 2;
+  g.beginPath(); g.arc(0, 0, 7.5, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.restore();
+}
+function drawFieldLed(c, j, on) {
+  const lp = project(190 + 40 * c, 440 + 20 * j, 0);
+  g.save();
+  g.translate(lp.x, lp.y);
+  g.scale(lp.s, lp.syScale);
+  g.fillStyle = on ? LED_COLS[j] : '#1f1633';
+  g.shadowColor = LED_COLS[j];
+  g.shadowBlur = on ? 13 : 0;
+  g.beginPath(); g.arc(0, 0, 6.8, 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+function drawFieldDynamic() {
+  g.save();
+  traceProjectedPoly(playfieldPts, 0);
+  g.clip();
+  for (let i = 0; i < 6; i++) {
+    const on = i < hits % 7, p = project(250 + i * 24, 345 - i * 18, 0);
+    drawCachedAt('L' + i + (on ? 1 : 0), p, 10 * Math.max(p.s, p.syScale), () => drawFieldLight(i, on));
+  }
+  for (let c = 0; c < 3; c++) {
     for (let j = 0; j < 7; j++) {
-      const lp = project(x, 440 + 20 * j, 0);
-      const on = 6 - j < lvl[c];
-      g.save();
-      g.translate(lp.x, lp.y);
-      g.scale(lp.s, lp.syScale);
-      g.fillStyle = on ? rc[j] : '#1f1633';
-      g.shadowColor = rc[j];
-      g.shadowBlur = on ? 13 : 0;
-      g.beginPath();
-      g.arc(0, 0, 6.8, 0, Math.PI * 2);
-      g.fill();
-      g.restore();
+      const on = 6 - j < lvl[c], lp = project(190 + 40 * c, 440 + 20 * j, 0);
+      drawCachedAt('R' + c + '_' + j + (on ? 1 : 0), lp, 7 * Math.max(lp.s, lp.syScale), () => drawFieldLed(c, j, on));
     }
   }
-  g.shadowBlur = 0;
-
   for (const sw of shockwaves) {
     const p = project(sw.x, sw.y, 0);
     const alpha = Math.max(0, sw.life / sw.maxLife);
@@ -1181,8 +1269,19 @@ function drawPlayfieldSurface() {
     g.restore();
   }
   g.globalAlpha = 1;
-
   g.restore();
+}
+
+/* camada estática pré-renderizada: gabinete + mesa + paredes (desenhada 1x por resize) */
+function buildStaticLayers() {
+  layerA = document.createElement('canvas');
+  layerA.width = Math.round(w * dpr); layerA.height = Math.round(h * dpr);
+  const k = layerA.getContext('2d');
+  k.setTransform(dpr, 0, 0, dpr, 0, 0);
+  k.lineCap = 'round'; k.lineJoin = 'round';
+  const prev = g; g = k;
+  camShakeX = camShakeY = 0;
+  try { drawCabinetStatic(); drawPlayfieldSurface(); drawWalls3D(); } finally { g = prev; }
 }
 
 /* ---------- PAREDES 3D EXTRUDADAS ---------- */
@@ -1197,7 +1296,7 @@ function drawWalls3D() {
     const t1 = project(q[0], q[1], wallH);
     const t2 = project(q[2], q[3], wallH);
 
-    g.fillStyle = 'rgba(0, 120, 175, 0.34)';
+    g.fillStyle = 'rgba(150, 20, 20, 0.45)';
     g.beginPath();
     g.moveTo(b1.x, b1.y);
     g.lineTo(b2.x, b2.y);
@@ -1207,9 +1306,9 @@ function drawWalls3D() {
     g.fill();
   }
 
-  g.shadowColor = '#00f6ff';
+  g.shadowColor = '#ff5a00';
   g.shadowBlur = 16;
-  g.strokeStyle = '#00e5ff';
+  g.strokeStyle = '#ff3a1a';
   g.lineWidth = 4.5;
   g.beginPath();
   for (const q of walls) {
@@ -1221,7 +1320,7 @@ function drawWalls3D() {
   g.stroke();
 
   g.shadowBlur = 0;
-  g.strokeStyle = '#e0ffff';
+  g.strokeStyle = '#ffd9a0';
   g.lineWidth = 1.5;
   g.beginPath();
   for (const q of walls) {
@@ -1243,7 +1342,7 @@ function drawSlingshot3D(q, idx) {
     const a = ptsBot[i], bPt = ptsBot[(i + 1) % 3];
     const p1 = project(a[0], a[1], 0), p2 = project(bPt[0], bPt[1], 0);
     const t1 = project(a[0], a[1], hZ), t2 = project(bPt[0], bPt[1], hZ);
-    g.fillStyle = flVal > 0 ? 'rgba(255, 140, 255, 0.7)' : 'rgba(130, 10, 140, 0.5)';
+    g.fillStyle = flVal > 0 ? 'rgba(255, 190, 90, 0.75)' : 'rgba(150, 20, 15, 0.55)';
     g.beginPath();
     g.moveTo(p1.x, p1.y); g.lineTo(p2.x, p2.y); g.lineTo(t2.x, t2.y); g.lineTo(t1.x, t1.y);
     g.closePath();
@@ -1251,14 +1350,14 @@ function drawSlingshot3D(q, idx) {
   }
 
   traceProjectedPoly(ptsBot, hZ);
-  g.fillStyle = flVal > 0 ? '#ffffff' : 'rgba(210, 20, 220, 0.55)';
+  g.fillStyle = flVal > 0 ? '#ffffff' : 'rgba(230, 40, 20, 0.6)';
   g.fill();
 
   const e1 = project(q[0], q[1], hZ);
   const e2 = project(q[2], q[3], hZ);
-  g.shadowColor = '#ff00ee';
+  g.shadowColor = '#ff6a00';
   g.shadowBlur = 14 + flVal * 24;
-  g.strokeStyle = flVal > 0 ? '#ffffff' : '#ff33ee';
+  g.strokeStyle = flVal > 0 ? '#ffffff' : '#ff4a20';
   g.lineWidth = 4 + flVal * 2;
   g.beginPath();
   g.moveTo(e1.x, e1.y);
@@ -1305,9 +1404,9 @@ function drawBumper3D(o) {
   g.fill();
 
   const bodyGr = g.createLinearGradient(pBot.x - rx, 0, pBot.x + rx, 0);
-  bodyGr.addColorStop(0, '#1e042b');
+  bodyGr.addColorStop(0, '#3a0c04');
   bodyGr.addColorStop(0.5, o.c);
-  bodyGr.addColorStop(1, '#14021f');
+  bodyGr.addColorStop(1, '#1a0402');
   g.fillStyle = bodyGr;
   g.beginPath();
   g.ellipse(pBot.x, pBot.y, rx, ry, 0, 0, Math.PI);
@@ -1327,9 +1426,9 @@ function drawBumper3D(o) {
   g.scale(1, ry / Math.max(1, rx));
 
   const topGr = g.createRadialGradient(-rx * 0.25, -rx * 0.25, 2, 0, 0, rx);
-  topGr.addColorStop(0, o.f > 0 ? '#ffffff' : '#4a146b');
+  topGr.addColorStop(0, o.f > 0 ? '#ffffff' : '#8a5a14');
   topGr.addColorStop(0.65, o.c);
-  topGr.addColorStop(1, '#240536');
+  topGr.addColorStop(1, '#3a0a02');
 
   g.shadowColor = o.glow;
   g.shadowBlur = 14 + o.f * 32;
@@ -1399,9 +1498,9 @@ function drawRocket3D(c, t) {
   g.fill();
 
   const rkGrad = g.createLinearGradient(tailL.x, 0, tailR.x, 0);
-  rkGrad.addColorStop(0, '#9aa5c4');
-  rkGrad.addColorStop(0.45, '#ffffff');
-  rkGrad.addColorStop(1, '#687394');
+  rkGrad.addColorStop(0, '#ff9a20');
+  rkGrad.addColorStop(0.45, '#ffe070');
+  rkGrad.addColorStop(1, '#c04a00');
   g.fillStyle = rkGrad;
   g.beginPath();
   g.moveTo(nose.x, nose.y);
@@ -1417,7 +1516,7 @@ function drawFlipper3D(f) {
     const tp = [f.px + f.d * FL * Math.cos(tr.a), f.py + FL * Math.sin(tr.a)];
     const p1 = project(f.px, f.py, hZ);
     const p2 = project(tp[0], tp[1], hZ);
-    g.strokeStyle = `rgba(255, 0, 230, ${tr.alpha * 0.45})`;
+    g.strokeStyle = `rgba(255, 120, 20, ${tr.alpha * 0.45})`;
     g.lineWidth = 16 * p1.s;
     g.lineCap = 'round';
     g.beginPath();
@@ -1440,16 +1539,16 @@ function drawFlipper3D(f) {
   g.lineTo(bTip.x + 3, bTip.y + 4);
   g.stroke();
 
-  g.strokeStyle = '#990077';
+  g.strokeStyle = '#8a1010';
   g.lineWidth = 17 * bBase.s;
   g.beginPath();
   g.moveTo(bBase.x, bBase.y);
   g.lineTo(bTip.x, bTip.y);
   g.stroke();
 
-  g.shadowColor = '#ff00ee';
+  g.shadowColor = '#ff5a00';
   g.shadowBlur = 16;
-  g.strokeStyle = '#ff33ee';
+  g.strokeStyle = '#ff3a20';
   g.lineWidth = 16 * tBase.s;
   g.beginPath();
   g.moveTo(tBase.x, tBase.y);
@@ -1604,9 +1703,9 @@ function drawBall3D() {
   const rad = R * pBall.s;
   const gr = g.createRadialGradient(pBall.x - rad * 0.35, pBall.y - rad * 0.35, 1, pBall.x, pBall.y, rad);
   gr.addColorStop(0, '#ffffff');
-  gr.addColorStop(0.35, '#b8ffff');
-  gr.addColorStop(0.75, '#00c8ff');
-  gr.addColorStop(1, '#004d7a');
+  gr.addColorStop(0.35, '#e8eef8');
+  gr.addColorStop(0.75, '#8a96b0');
+  gr.addColorStop(1, '#2a3042');
 
   g.shadowColor = '#00f6ff';
   g.shadowBlur = 18;
@@ -1706,17 +1805,20 @@ function drawArcadeInitialsPicker(cx, topY, boxW, pulse) {
 
 /* ---------- LOOP DE RENDERIZAÇÃO PRINCIPAL ---------- */
 function draw(t) {
-  if (!w || !h || !bgStatic) return;
+  if (!w || !h || !bgStatic || !layerA) return;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const sh = shake * 8;
-  camShakeX = (Math.random() - .5) * sh;
-  camShakeY = (Math.random() - .5) * sh;
-
   drawAnimatedBg(t);
-  drawCabinet3D(t);
-  drawPlayfieldSurface();
-  drawWalls3D();
+
+  g.save();
+  if (sh > 0.01) {
+    const ms = project(250, 450, 0).s;
+    g.translate((Math.random() - .5) * sh * ms, (Math.random() - .5) * sh * ms);
+  }
+  g.drawImage(layerA, 0, 0, w, h);
+  drawCabinetHUD();
+  drawFieldDynamic();
 
   const renderables = [];
   bumpers.forEach(o => renderables.push({ y: o.y, fn: () => drawBumper3D(o) }));
@@ -1734,16 +1836,14 @@ function draw(t) {
   for (const p of particles) {
     const pp = project(p.x, p.y, 12);
     const alpha = Math.max(0, p.life / p.maxLife);
+    const rad = p.size * pp.s * alpha, a = Math.min(1, alpha);
     g.fillStyle = p.col;
-    g.globalAlpha = alpha;
-    g.shadowColor = p.col;
-    g.shadowBlur = 6;
-    g.beginPath();
-    g.arc(pp.x, pp.y, p.size * pp.s * alpha, 0, Math.PI * 2);
-    g.fill();
+    g.globalAlpha = a * 0.3;
+    g.beginPath(); g.arc(pp.x, pp.y, rad + 3, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = a;
+    g.beginPath(); g.arc(pp.x, pp.y, rad, 0, Math.PI * 2); g.fill();
   }
   g.globalAlpha = 1;
-  g.shadowBlur = 0;
 
   for (const p of popups) {
     const pp = project(p.x, p.y, 24);
@@ -1755,7 +1855,6 @@ function draw(t) {
 
   g.save();
   traceProjectedPoly(playfieldPts, 18);
-  g.clip();
   const glassGr = g.createLinearGradient(0, 0, w, h);
   glassGr.addColorStop(0, 'rgba(255, 255, 255, 0.05)');
   glassGr.addColorStop(0.38, 'rgba(255, 255, 255, 0.0)');
@@ -1763,12 +1862,12 @@ function draw(t) {
   glassGr.addColorStop(0.68, 'rgba(255, 255, 255, 0.0)');
   glassGr.addColorStop(1, 'rgba(0, 255, 255, 0.03)');
   g.fillStyle = glassGr;
-  g.fillRect(0, 0, w, h);
+  g.fill();
 
   if (flashScreen > 0) {
     g.fillStyle = flashCol;
     g.globalAlpha = flashScreen * 0.35;
-    g.fillRect(0, 0, w, h);
+    g.fill();
     g.globalAlpha = 1;
   }
   g.restore();
@@ -1783,6 +1882,8 @@ function draw(t) {
     g.restore();
   }
 
+  g.restore();
+
   /* ---------- SOBREPOSIÇÃO DE INÍCIO / FIM DE JOGO ---------- */
   if (state !== 'play') {
     g.fillStyle = 'rgba(3, 0, 12, 0.78)';
@@ -1794,16 +1895,19 @@ function draw(t) {
     const mx = (w - modalW) * 0.5;
     const my = (h - modalH) * 0.5 + 10;
 
-    g.fillStyle = 'rgba(12, 4, 30, 0.92)';
-    g.strokeStyle = '#00f6ff';
-    g.lineWidth = 2.5;
-    g.shadowColor = '#00f6ff';
-    g.shadowBlur = 22;
-    g.beginPath();
-    g.roundRect(mx, my, modalW, modalH, 24);
-    g.fill();
-    g.stroke();
-    g.shadowBlur = 0;
+    const MP = 44;
+    const mSpr = getSprite('modal|' + modalW.toFixed(1) + 'x' + modalH.toFixed(1), modalW + MP * 2, modalH + MP * 2, k => {
+      k.fillStyle = 'rgba(12, 4, 30, 0.92)';
+      k.strokeStyle = '#00f6ff';
+      k.lineWidth = 2.5;
+      k.shadowColor = '#00f6ff';
+      k.shadowBlur = 22;
+      k.beginPath();
+      k.roundRect(MP, MP, modalW, modalH, 24);
+      k.fill();
+      k.stroke();
+    });
+    g.drawImage(mSpr, mx - MP, my - MP, mSpr.width / dpr, mSpr.height / dpr);
 
     const cx = w * 0.5;
     if (state === 'start') {
@@ -1839,9 +1943,24 @@ function draw(t) {
 }
 
 /* ---------- LOOP PRINCIPAL ---------- */
-let last = 0;
+let last = 0, perfN = 0, perfSum = 0, perfWarm = 40;
+/* se o aparelho não sustentar ~50fps, reduz a resolução interna do canvas em degraus */
+function adaptQuality(delta) {
+  if (delta > 250) return;
+  if (perfWarm > 0) { perfWarm--; return; }
+  perfSum += delta; perfN++;
+  if (perfN < 45) return;
+  const avg = perfSum / perfN;
+  perfSum = 0; perfN = 0;
+  if (avg > 20) {
+    const cur = Math.min(devicePixelRatio || 1, maxDpr);
+    const next = [1.5, 1.25, 1].find(v => v < cur);
+    if (next) { maxDpr = next; perfWarm = 30; resize(); }
+  }
+}
 function loop(t) {
   const dt = Math.min((t - last) / 1000 || 0, 1 / 30);
+  adaptQuality(t - last);
   last = t;
   update(dt);
   draw(t);
